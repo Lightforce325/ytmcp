@@ -46,7 +46,7 @@ class MetadataService:
             if secondary:
                 description = _runs_text(
                     secondary.get("attributedDescription", {}).get("content", "")
-                    if isinstance(secondary.get("attributedDescription", {}).get("content", ""), str)
+                    if secondary.get("attributedDescription", {}).get("content", "") != ""
                     else secondary.get("description", {}).get("runs", [])
                 )
         if not title and not description:

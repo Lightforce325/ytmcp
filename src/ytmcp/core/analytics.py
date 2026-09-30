@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 from .client import YouTubeClient
@@ -93,9 +95,6 @@ def _parse_analytics(data: dict[str, Any], channel_id: str, period_days: int) ->
 
 
 def _scrape_analytics(html: str, channel_id: str, period_days: int) -> Analytics:
-    import json
-    import re
-
     m = re.search(r"var ytInitialData\s*=\s*(\{.*?\});</script>", html, re.DOTALL)
     if not m:
         return Analytics(channel_id=channel_id, period_days=period_days)
@@ -107,9 +106,6 @@ def _scrape_analytics(html: str, channel_id: str, period_days: int) -> Analytics
 
 
 def _parse_popular(html: str) -> list[Video]:
-    import json
-    import re
-
     videos: list[Video] = []
     m = re.search(r"var ytInitialData\s*=\s*(\{.*?\});</script>", html, re.DOTALL)
     if not m:
