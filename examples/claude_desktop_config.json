@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "ytmcp": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/ytmcp",
+        "run",
+        "ytmcp",
+        "serve"
+      ],
+      "env": {
+        "YTMCP_AUTH_MODE": "cookie",
+        "YTMCP_COOKIE_FILE": "/ABSOLUTE/PATH/TO/cookies.txt"
+      }
+    }
+  }
+}
