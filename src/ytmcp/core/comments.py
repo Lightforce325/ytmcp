@@ -86,13 +86,18 @@ def _walk_comments(node: Any) -> list[Comment]:
     found: list[Comment] = []
     if isinstance(node, dict):
         # A ``commentThreadRenderer`` wraps a nested ``commentRenderer`` that
-        # describes the *same* comment. Parse the wrapper and stop there for
-        # that key, otherwise the nested renderer would be emitted twice.
+        # describes the *same* comment. Parse the wrapper, then recurse into the
+        # *rest* of the wrapper (e.g. ``replies``) while skipping the nested
+        # ``comment`` key, so the main comment is not emitted twice and its
+        # replies are still discovered.
         for key in ("commentThreadRenderer", "commentRenderer"):
             if key in node:
                 found.append(_parse_comment(node[key]))
         for k, v in node.items():
             if k == "commentThreadRenderer":
+                if isinstance(v, dict):
+                    remainder = {kk: vv for kk, vv in v.items() if kk != "comment"}
+                    found.extend(_walk_comments(remainder))
                 continue
             found.extend(_walk_comments(v))
     elif isinstance(node, list):

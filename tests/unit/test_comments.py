@@ -81,6 +81,68 @@ def test_walk_comments_thread_renderer_not_duplicated() -> None:
     assert len(comments) == 1, f"expected 1 comment, got {len(comments)}: {comments}"
 
 
+def test_walk_comments_keeps_replies() -> None:
+    """Regression: replies inside a commentThreadRenderer must NOT be lost.
+
+    A previous fix used ``continue`` for the whole ``commentThreadRenderer``,
+    which discarded ``replies`` entirely. The main comment must appear once and
+    every reply must be surfaced.
+    """
+    node = {
+        "commentThreadRenderer": {
+            "comment": {
+                "commentRenderer": {
+                    "commentId": "TOP",
+                    "contentText": {"runs": [{"text": "top comment"}]},
+                }
+            },
+            "replies": {
+                "commentRepliesRenderer": {
+                    "contents": [
+                        {
+                            "commentRenderer": {
+                                "commentId": "REPLY1",
+                                "contentText": {"runs": [{"text": "first reply"}]},
+                            }
+                        },
+                        {
+                            "commentRenderer": {
+                                "commentId": "REPLY2",
+                                "contentText": {"runs": [{"text": "second reply"}]},
+                            }
+                        },
+                    ]
+                }
+            },
+        }
+    }
+    comments = _walk_comments(node)
+    ids = [c.comment_id for c in comments]
+    assert ids == ["TOP", "REPLY1", "REPLY2"], f"unexpected ids: {ids}"
+    # no duplicates
+    assert len(ids) == len(set(ids)), f"duplicates present: {ids}"
+    # reply text is preserved
+    texts = {c.comment_id: c.text for c in comments}
+    assert texts["REPLY1"] == "first reply"
+    assert texts["REPLY2"] == "second reply"
+
+def test_walk_comments_thread_with_replies_no_duplicates() -> None:
+    """Ensure the main comment is emitted exactly once even with replies."""
+    node = {
+        "commentThreadRenderer": {
+            "comment": {"commentRenderer": {"commentId": "only-once"}},
+            "replies": {
+                "commentRepliesRenderer": {
+                    "contents": [{"commentRenderer": {"commentId": "r1"}}]
+                }
+            },
+        }
+    }
+    comments = _walk_comments(node)
+    ids = [c.comment_id for c in comments]
+    assert ids.count("only-once") == 1
+    assert ids == ["only-once", "r1"]
+
 def test_walk_comments_handles_nested_lists() -> None:
     node = {
         "contents": [
@@ -230,6 +292,56 @@ async def test_list_comments_from_watch_page(settings: Settings) -> None:
     assert comments[0].comment_id == "x1"
     assert comments[0].text == "wow"
 
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_comments_includes_replies(settings: Settings) -> None:
+    """End-to-end: replies nested in a thread must reach list_comments output."""
+    respx.post(url__regex=r".*youtubei/v1/next.*").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "contents": {
+                    "twoColumnWatchNextResults": {
+                        "results": {
+                            "results": {
+                                "contents": [
+                                    {
+                                        "commentThreadRenderer": {
+                                            "comment": {
+                                                "commentRenderer": {
+                                                    "commentId": "TOP",
+                                                    "contentText": {"runs": [{"text": "top"}]},
+                                                }
+                                            },
+                                            "replies": {
+                                                "commentRepliesRenderer": {
+                                                    "contents": [
+                                                        {
+                                                            "commentRenderer": {
+                                                                "commentId": "R1",
+                                                                "contentText": {
+                                                                    "runs": [{"text": "reply"}]
+                                                                },
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            },
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+        )
+    )
+    async with YouTubeClient(settings) as client:
+        comments = await CommentService(client).list_comments("vid1", limit=10)
+    ids = [c.comment_id for c in comments]
+    assert ids == ["TOP", "R1"], f"expected replies surfaced, got {ids}"
 
 @pytest.mark.asyncio
 @respx.mock
