@@ -345,6 +345,34 @@ async def test_transport_error_exhausted_raises_upstream_error(settings: Setting
         with pytest.raises(UpstreamError):
             await client.get("https://example.com/dead")
 
+@respx.mock
+async def test_exhausted_rate_limit_like_transport_error_reraises_original(
+    settings: Settings,
+) -> None:
+    """``request`` re-raises ``last_exc`` verbatim when it is a ``RateLimitError``.
+
+    The normal 429 path raises ``RateLimitError`` immediately, so the trailing
+    ``if isinstance(last_exc, RateLimitError): raise last_exc`` guard is only
+    reachable when a *transport* failure that is also a ``RateLimitError``
+    exhausts the retry budget. Such a hybrid exception is caught by the
+    ``httpx.TransportError`` branch (setting ``last_exc``) yet satisfies the final
+    ``isinstance`` check — pinning the guard's behaviour (re-raise the original,
+    rather than wrapping it in ``UpstreamError``).
+    """
+
+    class HybridRateLimitError(httpx.ConnectError, RateLimitError):
+        """A transport error that is *also* a ``RateLimitError``."""
+
+    route = respx.get("https://example.com/ratelimited").mock(
+        side_effect=HybridRateLimitError("too many requests")
+    )
+    async with YouTubeClient(settings) as client:
+        with pytest.raises(RateLimitError):
+            await client.get("https://example.com/ratelimited")
+
+    # max_retries == 1 -> the request is attempted twice before giving up.
+    assert route.call_count == settings.max_retries + 1
+
 
 @respx.mock
 async def test_4xx_returned_without_retry(settings: Settings) -> None:

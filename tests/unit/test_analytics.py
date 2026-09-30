@@ -331,6 +331,36 @@ async def test_get_channel_analytics_primary_endpoint_error_falls_back(
         analytics = await AnalyticsService(client).get_channel_analytics(CHANNEL)
     assert analytics.views == 12345
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_channel_analytics_fallback_4xx_returns_default_and_warns(
+    settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The Studio fallback returning a 4xx hits the explicit ``raise`` path.
+
+    A 4xx is *returned* by the client (not retried), so ``_fallback`` sees
+    ``resp.status_code >= 400``, raises ``UpstreamError``, and the surrounding
+    ``try/except`` swallows it — yielding the default ``Analytics`` and logging
+    a warning. This is the only way to execute the ``raise`` statement itself
+    (a 5xx would raise inside the client's retry loop instead).
+    """
+    respx.post(ANALYTICS_URL).mock(return_value=httpx.Response(403, text="denied"))
+    fallback_route = respx.get(FALLBACK_URL).mock(
+        return_value=httpx.Response(404, text="not found")
+    )
+    with caplog.at_level("WARNING", logger="ytmcp.core.analytics"):
+        async with YouTubeClient(settings) as client:
+            analytics = await AnalyticsService(client).get_channel_analytics(
+                CHANNEL, period_days=21
+            )
+
+    assert fallback_route.called
+    assert analytics.channel_id == CHANNEL
+    assert analytics.period_days == 21
+    assert analytics.views is None
+    assert any("Analytics unavailable" in r.message for r in caplog.records)
+    assert any("Analytics fallback failed: 404" in r.message for r in caplog.records)
+
 
 # --------------------------------------------------------------------------- #
 # AnalyticsService.get_top_videos

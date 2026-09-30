@@ -217,6 +217,48 @@ async def test_get_own_channel_id_no_channelid_line_raises(settings: Settings) -
         with pytest.raises(UpstreamError):
             await ChannelService(client).get_own_channel_id()
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_own_channel_id_channelid_line_without_valid_match(
+    settings: Settings,
+) -> None:
+    """A ``channelId`` line whose regex does NOT match continues to the next line.
+
+    This is the partial branch where ``"channelId" in line`` is True but the
+    ``"channelId":"UC<22>"`` pattern finds nothing (wrong prefix / wrong length),
+    so the loop advances (``continue``) instead of returning. The final line has
+    no ``channelId`` at all, so the method ends up raising ``UpstreamError``.
+    """
+    html = (
+        "<html>\n"
+        '<script>var a = {"channelId":"not-a-channel-id"};</script>\n'
+        '<script>var b = {"channelId":"UCshort"};</script>\n'
+        '<script>var c = {"other":"nothing here"};</script>\n'
+        "</html>"
+    )
+    route = respx.get(ACCOUNT_URL).mock(return_value=httpx.Response(200, text=html))
+    async with YouTubeClient(settings) as client:
+        with pytest.raises(UpstreamError):
+            await ChannelService(client).get_own_channel_id()
+    assert route.called
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_own_channel_id_invalid_line_then_valid_line(
+    settings: Settings,
+) -> None:
+    """After skipping an invalid ``channelId`` line, a later valid one is returned."""
+    own = "UCabcdefghijklmnopqrstuv"
+    html = (
+        "<html>\n"
+        '<script>var a = {"channelId":"bogus"};</script>\n'
+        f'<script>var b = {{"channelId":"{own}"}};</script>\n'
+        "</html>"
+    )
+    respx.get(ACCOUNT_URL).mock(return_value=httpx.Response(200, text=html))
+    async with YouTubeClient(settings) as client:
+        assert await ChannelService(client).get_own_channel_id() == own
+
 # --------------------------------------------------------------------------- #
 # ChannelService.get_subscriber_count
 # --------------------------------------------------------------------------- #

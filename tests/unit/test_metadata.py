@@ -198,6 +198,51 @@ async def test_update_metadata_partial_fields(settings: Settings) -> None:
     body = route.calls.last.request.content.decode()
     assert "description" not in body
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_update_metadata_description_only_omits_title(settings: Settings) -> None:
+    """``description`` set while ``title`` is ``None`` skips the title branch.
+
+    Exercises the partial branch where ``if title is not None:`` is False (the
+    flow jumps straight to the description check) while the description *is*
+    present, so only the description is sent in the payload.
+    """
+    route = respx.post(VIDEO_MANAGER_URL).mock(
+        return_value=httpx.Response(200, json={})
+    )
+    async with YouTubeClient(settings) as client:
+        result = await MetadataService(client).update_metadata(
+            "vid1", description="Only Description"
+        )
+
+    assert result["updated_fields"] == ["videoId", "description"]
+    body = route.calls.last.request.content.decode()
+    assert "Only Description" in body
+    assert "newDescription" in body
+    assert "newTitle" not in body
+    assert "title" not in body
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_update_metadata_title_only_omits_description(settings: Settings) -> None:
+    """``title`` set while ``description`` is ``None`` — symmetric case.
+
+    ``if title is not None:`` is True (line 75 -> 76) and ``if description is
+    not None:`` is False, so the payload carries only the title.
+    """
+    route = respx.post(VIDEO_MANAGER_URL).mock(
+        return_value=httpx.Response(200, json={})
+    )
+    async with YouTubeClient(settings) as client:
+        result = await MetadataService(client).update_metadata("vid1", title="Only Title")
+
+    assert result["updated_fields"] == ["videoId", "title"]
+    body = route.calls.last.request.content.decode()
+    assert "newTitle" in body
+    assert "Only Title" in body
+    assert "newDescription" not in body
+    assert "description" not in body
+
 
 @pytest.mark.asyncio
 @respx.mock
