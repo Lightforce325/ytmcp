@@ -67,6 +67,9 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: end-to-end integration tests (opt-in via YTMCP_RUN_INTEGRATION=1)",
+]
 
 [tool.mypy]
 python_version = "3.11"
