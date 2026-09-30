@@ -270,6 +270,39 @@ async def test_upload_init_without_upload_url_raises(
         with pytest.raises(UploadError, match="No upload URL"):
             await UploadController(client).upload(path, title="X")
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_upload_init_non_json_body_without_upload_url_raises(
+    settings: Settings, tmp_path: Path
+) -> None:
+    """A 200 with neither headers nor a valid JSON body must raise UploadError.
+
+    Covers the defensive ``except Exception`` guard in ``_initiate``: when the
+    body is not JSON, ``resp.json()`` raises, ``upload_url`` is set to ``None``,
+    and the missing-URL ``UploadError`` is raised.
+    """
+    path = _make_file(tmp_path, 10)
+    respx.post(STUDIO_UPLOAD_URL).mock(
+        return_value=httpx.Response(200, content=b"<html>not json</html>")
+    )
+    async with YouTubeClient(settings) as client:
+        with pytest.raises(UploadError, match="No upload URL returned by Studio."):
+            await UploadController(client).upload(path, title="X")
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upload_init_json_body_without_upload_key_raises(
+    settings: Settings, tmp_path: Path
+) -> None:
+    """A valid JSON body lacking ``uploadUrl`` still raises UploadError."""
+    path = _make_file(tmp_path, 10)
+    respx.post(STUDIO_UPLOAD_URL).mock(
+        return_value=httpx.Response(200, json={"foo": 1})
+    )
+    async with YouTubeClient(settings) as client:
+        with pytest.raises(UploadError, match="No upload URL returned by Studio."):
+            await UploadController(client).upload(path, title="X")
+
 
 @pytest.mark.asyncio
 @respx.mock
