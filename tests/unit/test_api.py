@@ -12,6 +12,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from ytmcp.api.app import app, create_app
+from ytmcp.core.exceptions import NotFoundError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -20,7 +21,7 @@ from ytmcp.api.app import app, create_app
 
 @pytest.fixture
 def client() -> TestClient:
-    """A TestClient bound to a freshly built app instance."""
+    """Return a TestClient bound to a freshly built app instance."""
     return TestClient(create_app())
 
 
@@ -28,14 +29,24 @@ def client() -> TestClient:
 NEXT_URL = "https://www.youtube.com/youtubei/v1/next"
 SEARCH_URL = "https://www.youtube.com/youtubei/v1/search"
 
+# Routes that must be registered on the app (trailing prefixes / exact paths).
+EXPECTED_ROUTE_PREFIXES = {
+    "/videos": ["/videos"],
+    "/playlists": ["/playlists"],
+    "/comments": ["/comments"],
+    "/channel": ["/channel"],
+    "/analytics": ["/analytics"],
+}
+MIN_PATHS = 19
+
 
 def _empty_next_payload() -> dict[str, object]:
-    """A ``next`` response with no title/description -> triggers NotFoundError."""
+    """Return a ``next`` response with no title/description (-> NotFoundError)."""
     return {"contents": {"twoColumnWatchNextResults": {"results": {"results": {"contents": []}}}}}
 
 
 def _search_payload() -> dict[str, object]:
-    """A ``search`` response containing one videoRenderer."""
+    """Return a ``search`` response containing a single videoRenderer."""
     return {
         "contents": {
             "twoColumnSearchResultsRenderer": {
@@ -55,6 +66,37 @@ def _search_payload() -> dict[str, object]:
                                     ]
                                 }
                             }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+
+def _video_next_payload() -> dict[str, object]:
+    """Return a ``next`` response with full primary + secondary info renderers."""
+    return {
+        "contents": {
+            "twoColumnWatchNextResults": {
+                "results": {
+                    "results": {
+                        "contents": [
+                            {
+                                "videoPrimaryInfoRenderer": {
+                                    "title": {"runs": [{"text": "My Video"}]},
+                                    "viewCount": {
+                                        "videoViewCountRenderer": {
+                                            "viewCount": {"runs": [{"text": "42 views"}]}
+                                        }
+                                    },
+                                }
+                            },
+                            {
+                                "videoSecondaryInfoRenderer": {
+                                    "attributedDescription": {"content": "A description"}
+                                }
+                            },
                         ]
                     }
                 }
@@ -83,16 +125,21 @@ def test_health_returns_ok_and_auth_mode(client: TestClient) -> None:
 def test_openapi_schema_has_at_least_19_paths(client: TestClient) -> None:
     resp = client.get("/openapi.json")
     assert resp.status_code == 200
-    assert len(resp.json()["paths"]) >= 19
+    assert len(resp.json()["paths"]) >= MIN_PATHS
 
 
-@pytest.mark.parametrize(
-    "prefix",
-    ["/videos", "/playlists", "/comments", "/channel", "/analytics"],
-)
+@pytest.mark.parametrize("prefix", sorted(EXPECTED_ROUTE_PREFIXES))
 def test_route_prefixes_registered(client: TestClient, prefix: str) -> None:
     paths = client.get("/openapi.json").json()["paths"]
-    assert any(p.startswith(prefix) for p in paths), f"no routes for {prefix}"
+    assert any(p.startswith(prefix) for p in paths), f"no routes registered for {prefix}"
+
+
+@pytest.mark.parametrize("prefix", sorted(EXPECTED_ROUTE_PREFIXES))
+def test_each_prefix_has_at_least_one_expected_path(client: TestClient, prefix: str) -> None:
+    """Each documented prefix must own its own registered route paths."""
+    paths = client.get("/openapi.json").json()["paths"]
+    owned = [p for p in paths if p.startswith(f"{prefix}/") or p == prefix]
+    assert owned, f"{prefix} owns no paths (only appears as a substring)"
 
 
 # ---------------------------------------------------------------------------
@@ -113,40 +160,14 @@ def test_search_returns_valid_json(client: TestClient) -> None:
 
 @respx.mock
 def test_get_video_returns_valid_json(client: TestClient) -> None:
-    payload = {
-        "contents": {
-            "twoColumnWatchNextResults": {
-                "results": {
-                    "results": {
-                        "contents": [
-                            {
-                                "videoPrimaryInfoRenderer": {
-                                    "title": {"runs": [{"text": "My Video"}]},
-                                    "viewCount": {
-                                        "videoViewCountRenderer": {
-                                            "viewCount": {"runs": [{"text": "42 views"}]}
-                                        }
-                                    },
-                                }
-                            },
-                            {
-                                "videoSecondaryInfoRenderer": {
-                                    "attributedDescription": {"content": "A description"}
-                                }
-                            },
-                        ]
-                    }
-                }
-            }
-        }
-    }
-    respx.post(NEXT_URL).mock(return_value=httpx.Response(200, json=payload))
+    respx.post(NEXT_URL).mock(return_value=httpx.Response(200, json=_video_next_payload()))
     resp = client.get("/videos/abc123")
     assert resp.status_code == 200
     body = resp.json()
     assert body["video_id"] == "abc123"
     assert body["title"] == "My Video"
     assert body["view_count"] == 42
+    assert body["description"] == "A description"
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +187,21 @@ def test_get_video_missing_returns_404(client: TestClient) -> None:
     resp = client.get("/videos/does-not-exist")
     assert resp.status_code == 404
     assert route.called
+
+
+@respx.mock
+def test_get_video_404_when_service_raises_not_found(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Directly mock ``MetadataService.get_video`` raising ``NotFoundError``."""
+
+    async def _raise(self: object, video_id: str) -> object:  # noqa: ANN001
+        raise NotFoundError(f"Video not found: {video_id}")
+
+    monkeypatch.setattr("ytmcp.core.metadata.MetadataService.get_video", _raise)
+    resp = client.get("/videos/ghost")
+    assert resp.status_code == 404
+    assert "ghost" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
