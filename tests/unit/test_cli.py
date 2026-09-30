@@ -223,3 +223,251 @@ def test_verify_cookies_missing_file_returns_exit_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert result.exception is not None
     assert "Cookie file not found" in str(result.exception)
+
+# --------------------------------------------------------------------------- #
+# serve / api (entry-point delegation)
+# --------------------------------------------------------------------------- #
+def test_serve_delegates_to_mcp_server_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``serve`` must call ``ytmcp.mcp.server.main`` and nothing more."""
+    import ytmcp.mcp.server as server_mod
+
+    calls: list[bool] = []
+    monkeypatch.setattr(server_mod, "main", lambda: calls.append(True))
+
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 0
+    assert calls == [True]
+
+
+def test_api_delegates_to_api_app_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``api`` must call ``ytmcp.api.app.main`` without starting a server."""
+    import ytmcp.api.app as api_mod
+
+    calls: list[bool] = []
+    monkeypatch.setattr(api_mod, "main", lambda: calls.append(True))
+
+    result = runner.invoke(app, ["api"])
+    assert result.exit_code == 0
+    assert calls == [True]
+
+
+# --------------------------------------------------------------------------- #
+# info / search / upload / analytics (services patched, no network)
+# --------------------------------------------------------------------------- #
+def _sample_video(video_id: str = "abc123"):
+    from ytmcp.core.models import Video
+
+    return Video(
+        video_id=video_id,
+        title="A video title",
+        url=f"https://www.youtube.com/watch?v={video_id}",
+    )
+
+
+def test_info_prints_channel_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ytmcp.core import ChannelService
+    from ytmcp.core.models import Channel
+
+    seen: dict[str, object] = {}
+
+    async def _fake_get_info(self, channel_id=None):  # noqa: ANN001
+        seen["channel_id"] = channel_id
+        return Channel(channel_id=channel_id or "UCown", title="My Channel")
+
+    monkeypatch.setattr(ChannelService, "get_info", _fake_get_info)
+
+    result = runner.invoke(app, ["info", "UC123"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["channel_id"] == "UC123"
+    assert data["title"] == "My Channel"
+    assert seen["channel_id"] == "UC123"
+
+
+def test_info_without_channel_id_passes_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ytmcp.core import ChannelService
+    from ytmcp.core.models import Channel
+
+    seen: dict[str, object] = {}
+
+    async def _fake_get_info(self, channel_id=None):  # noqa: ANN001
+        seen["channel_id"] = channel_id
+        return Channel(channel_id="UCown")
+
+    monkeypatch.setattr(ChannelService, "get_info", _fake_get_info)
+    result = runner.invoke(app, ["info"])
+    assert result.exit_code == 0, result.output
+    assert seen["channel_id"] is None
+
+
+def test_search_renders_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ytmcp.core import SearchService
+
+    seen: dict[str, object] = {}
+
+    async def _fake_search(self, query, *, limit=20):  # noqa: ANN001
+        seen["query"] = query
+        seen["limit"] = limit
+        return [_sample_video("v1"), _sample_video("v2")]
+
+    monkeypatch.setattr(SearchService, "search", _fake_search)
+
+    result = runner.invoke(app, ["search", "cats", "--limit", "3"])
+    assert result.exit_code == 0, result.output
+    assert "Search: cats" in result.output
+    assert "v1" in result.output and "v2" in result.output
+    assert seen == {"query": "cats", "limit": 3}
+
+
+def test_search_default_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ytmcp.core import SearchService
+
+    seen: dict[str, object] = {}
+
+    async def _fake_search(self, query, *, limit=20):  # noqa: ANN001
+        seen["limit"] = limit
+        return []
+
+    monkeypatch.setattr(SearchService, "search", _fake_search)
+    result = runner.invoke(app, ["search", "nothing"])
+    assert result.exit_code == 0, result.output
+    assert seen["limit"] == 10
+
+
+def test_upload_prints_result_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from ytmcp.core import UploadController
+    from ytmcp.core.models import UploadResult, VideoStatus, Visibility
+
+    seen: dict[str, object] = {}
+
+    async def _fake_upload(self, file_path, **kwargs):  # noqa: ANN001
+        seen["file_path"] = file_path
+        seen.update(kwargs)
+        return UploadResult(
+            video_id="up-1",
+            title=kwargs["title"],
+            status=VideoStatus(upload_status="uploaded", privacy_status=kwargs["visibility"]),
+            url="https://www.youtube.com/watch?v=up-1",
+        )
+
+    monkeypatch.setattr(UploadController, "upload", _fake_upload)
+
+    result = runner.invoke(
+        app,
+        [
+            "upload",
+            str(tmp_path / "video.mp4"),
+            "--title",
+            "My upload",
+            "--description",
+            "desc",
+            "--visibility",
+            "public",
+            "--tags",
+            "a, b ,c",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["video_id"] == "up-1"
+    assert seen["title"] == "My upload"
+    assert seen["visibility"] is Visibility.PUBLIC
+    # tags are stripped and empties dropped.
+    assert seen["tags"] == ["a", "b", "c"]
+
+
+def test_upload_defaults_to_private(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from ytmcp.core import UploadController
+    from ytmcp.core.models import UploadResult, VideoStatus, Visibility
+
+    seen: dict[str, object] = {}
+
+    async def _fake_upload(self, file_path, **kwargs):  # noqa: ANN001
+        seen.update(kwargs)
+        return UploadResult(
+            video_id="up-2",
+            title=kwargs["title"],
+            status=VideoStatus(upload_status="uploaded", privacy_status=kwargs["visibility"]),
+            url="https://www.youtube.com/watch?v=up-2",
+        )
+
+    monkeypatch.setattr(UploadController, "upload", _fake_upload)
+    result = runner.invoke(app, ["upload", str(tmp_path / "v.mp4"), "--title", "t"])
+    assert result.exit_code == 0, result.output
+    assert seen["visibility"] is Visibility.PRIVATE
+    assert seen["tags"] == []
+    assert seen["description"] == ""
+
+
+def test_analytics_prints_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ytmcp.core import AnalyticsService
+    from ytmcp.core.models import Analytics
+
+    seen: dict[str, object] = {}
+
+    async def _fake_analytics(self, channel_id, *, period_days=28):  # noqa: ANN001
+        seen["channel_id"] = channel_id
+        seen["period_days"] = period_days
+        return Analytics(channel_id=channel_id, period_days=period_days, views=1234)
+
+    monkeypatch.setattr(AnalyticsService, "get_channel_analytics", _fake_analytics)
+
+    result = runner.invoke(app, ["analytics", "UC1", "--period-days", "7"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["views"] == 1234
+    assert seen == {"channel_id": "UC1", "period_days": 7}
+
+
+# --------------------------------------------------------------------------- #
+# auth login (device flow patched)
+# --------------------------------------------------------------------------- #
+def test_auth_login_prints_device_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ytmcp.core.auth import OAuthProvider
+
+    flow = {
+        "verification_url": "https://google.com/device",
+        "user_code": "ABCD-EFGH",
+        "device_code": "dev-code",
+        "interval": 5,
+    }
+
+    async def _fake_start(self, client):  # noqa: ANN001
+        return flow
+
+    async def _fake_poll(self, client, device_code, interval=5):  # noqa: ANN001
+        assert device_code == "dev-code"
+        return {"scope": "youtube.force-ssl"}
+
+    monkeypatch.setattr(OAuthProvider, "start_device_flow", _fake_start)
+    monkeypatch.setattr(OAuthProvider, "poll_device_token", _fake_poll)
+
+    result = runner.invoke(app, ["auth", "login"])
+    assert result.exit_code == 0, result.output
+    assert "ABCD-EFGH" in result.output
+    assert "Authenticated!" in result.output
+    assert "youtube.force-ssl" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# config with populated credentials -> redaction
+# --------------------------------------------------------------------------- #
+def test_config_redacts_populated_credentials_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YTMCP_OAUTH_CLIENT_SECRET", "super-secret")
+    monkeypatch.setenv("YTMCP_OAUTH_REFRESH_TOKEN", "super-refresh")
+    monkeypatch.setenv("YTMCP_OAUTH_CLIENT_ID", "client-id-123")
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["config"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["oauth_client_secret"] == "***"
+    assert data["oauth_refresh_token"] == "***"
+    # Non-secret identifiers remain visible.
+    assert data["oauth_client_id"] == "client-id-123"
+    # Neither secret value leaks anywhere in stdout.
+    assert "super-secret" not in result.output
+    assert "super-refresh" not in result.output
+
