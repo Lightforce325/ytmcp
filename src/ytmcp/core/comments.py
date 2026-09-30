@@ -91,7 +91,7 @@ def _walk_comments(node: Any) -> list[Comment]:
         # ``comment`` key, so the main comment is not emitted twice and its
         # replies are still discovered.
         for key in ("commentThreadRenderer", "commentRenderer"):
-            if key in node:
+            if key in node and isinstance(node[key], dict):
                 found.append(_parse_comment(node[key]))
         for k, v in node.items():
             if k == "commentThreadRenderer":
