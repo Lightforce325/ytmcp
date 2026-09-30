@@ -88,7 +88,16 @@ def test_config_redacts_secrets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     # The real secrets must never appear in the output.
     assert "rahasia" not in result.output
 
-def test_config_leaves_unset_secrets_as_null() -> None:
+def test_config_leaves_unset_secrets_as_null(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Isolate from any ambient YTMCP_* env vars; otherwise a machine/CI that
+    # exports oauth secrets would make this assertion fail spuriously.
+    monkeypatch.delenv("YTMCP_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("YTMCP_OAUTH_REFRESH_TOKEN", raising=False)
+    monkeypatch.setenv("YTMCP_DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+
     result = runner.invoke(app, ["config"])
     assert result.exit_code == 0
     data = json.loads(result.output)

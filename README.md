@@ -181,11 +181,70 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown.
 ## 🧪 Development
 
 ```bash
-uv pip install -e ".[dev]"
-uv run pytest                 # run tests
+uv pip install -e ".[dev]"    # install dev dependencies
 uv run ruff check .           # lint
 uv run ruff format .          # format
 uv run mypy src               # type-check
+```
+
+### Testing
+
+The suite lives in `tests/` and runs on [`pytest`](https://docs.pytest.org/)
+with [`pytest-asyncio`](https://pytest-asyncio.readthedocs.io/) (`asyncio_mode = "auto"`)
+and [`respx`](https://lundberg.github.io/respx/) for HTTP mocking — no network
+access or credentials are needed for the default run.
+
+```bash
+# Run the whole suite (unit tests + integration tests, which skip by default)
+uv run pytest
+
+# Run only the unit tests
+uv run pytest tests/unit
+
+# Run a single file / test
+uv run pytest tests/unit/test_upload.py -q
+uv run pytest tests/unit/test_config.py::test_settings_defaults -q
+```
+
+#### Coverage
+
+Coverage is configured with [`pytest-cov`](https://pytest-cov.readthedocs.io/)
+and [`coverage.py`](https://coverage.readthedocs.io/). Configuration lives in
+`pyproject.toml` under `[tool.coverage.run]` (source = `src/ytmcp`, branch
+coverage enabled) and `[tool.coverage.report]`.
+
+```bash
+# Terminal report highlighting missing lines
+uv run pytest --cov=src/ytmcp --cov-report=term-missing
+
+# HTML report (written to htmlcov/, git-ignored)
+uv run pytest --cov=src/ytmcp --cov-report=html
+open htmlcov/index.html
+
+# Fail the run if total coverage drops below a threshold
+uv run pytest --cov=src/ytmcp --cov-report=term-missing --cov-fail-under=70
+```
+
+#### Integration tests (opt-in)
+
+End-to-end multi-service flows live in `tests/integration/`. They are marked
+`integration` and **skipped by default**; opt in with the environment variable:
+
+```bash
+# Run everything, including integration tests
+YTMCP_RUN_INTEGRATION=1 uv run pytest -m integration
+
+# Run only the integration marker
+YTMCP_RUN_INTEGRATION=1 uv run pytest tests/integration -m integration
+```
+
+#### Quality gates
+
+```bash
+uv run pytest                                  # tests
+uv run pytest --cov=src/ytmcp --cov-report=term-missing  # tests + coverage
+uv run ruff check .                            # lint
+uv run mypy src                                # type-check
 ```
 
 ---
