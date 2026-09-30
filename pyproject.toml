@@ -42,9 +42,9 @@ ytmcp-mcp = "ytmcp.mcp.server:main"
 ytmcp-api = "ytmcp.api.app:main"
 
 [project.urls]
-Homepage = "https://github.com/your-username/ytmcp"
-Repository = "https://github.com/your-username/ytmcp"
-Issues = "https://github.com/your-username/ytmcp/issues"
+Homepage = "https://github.com/Lightforce325/ytmcp"
+Repository = "https://github.com/Lightforce325/ytmcp"
+Issues = "https://github.com/Lightforce325/ytmcp/issues"
 
 [build-system]
 requires = ["hatchling"]

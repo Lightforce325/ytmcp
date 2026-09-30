@@ -31,5 +31,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/) and
 ### Security
 - Auth token cache and cookie files are gitignored by default.
 
-[Unreleased]: https://github.com/your-username/ytmcp/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/your-username/ytmcp/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Lightforce325/ytmcp/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Lightforce325/ytmcp/releases/tag/v0.1.0

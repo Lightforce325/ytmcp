@@ -2,7 +2,7 @@
 
 > **Unofficial YouTube API + MCP server** — let AI agents control a YouTube channel end-to-end.
 
-[![CI](https://github.com/your-username/ytmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/ytmcp/actions/workflows/ci.yml)
+[![CI](https://github.com/Lightforce325/ytmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Lightforce325/ytmcp/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
@@ -86,7 +86,7 @@ uv run ytmcp auth status
 
 ```bash
 # 1. Install
-git clone https://github.com/your-username/ytmcp.git
+git clone https://github.com/Lightforce325/ytmcp.git
 cd ytmcp
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
