@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from pathlib import Path
@@ -167,12 +168,14 @@ class UploadController:
         if not path.exists():
             raise UploadError(f"Thumbnail not found: {path}")
         url = f"{STUDIO_BASE}/youtubei/v1/video_manager/set_thumbnail"
-        body = {
-            "context": self.client.innertube_payload()["context"],
+        # Multipart form fields must be primitives, so the nested InnerTube
+        # context has to be serialised as JSON.
+        data = {
+            "context": json.dumps(self.client.innertube_payload()["context"]),
             "videoId": video_id,
         }
         files = {"file": (path.name, path.read_bytes(), "image/png")}
-        resp = await self.client.request("POST", url, data=body, files=files, mutate=True)
+        resp = await self.client.request("POST", url, data=data, files=files, mutate=True)
         if resp.status_code >= 400:
             raise UploadError(f"Thumbnail set failed: {resp.status_code}")
         return True
