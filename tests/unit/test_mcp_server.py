@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 import pytest
 
-from ytmcp.mcp.server import _Server, create_server
+from ytmcp.config import Settings
+from ytmcp.mcp.server import _Server, create_server, main
 from ytmcp.mcp.tools import register_all_tools
 
 # The complete, expected tool surface exposed to AI agents.
@@ -192,3 +194,115 @@ def test_register_all_tools_on_fresh_server_matches_create_server() -> None:
     register_all_tools(manual)
     manual_names = {t.name for t in asyncio.run(manual.list_tools())}
     assert manual_names == EXPECTED_TOOLS
+
+
+# --------------------------------------------------------------------------- #
+# main(): transport selection
+# --------------------------------------------------------------------------- #
+class _DummyServer:
+    """A dummy ``mcp`` server recording the transport passed to ``run``."""
+
+    def __init__(self) -> None:
+        self.run_calls: list[dict[str, Any]] = []
+
+    def run(self, **kwargs: Any) -> None:
+        self.run_calls.append(kwargs)
+
+    @property
+    def transport(self) -> str | None:
+        return self.run_calls[-1].get("transport") if self.run_calls else None
+
+
+def _settings_with_transport(transport: str) -> Settings:
+    """Build a Settings instance carrying an arbitrary transport string.
+
+    ``Settings.mcp_transport`` is a ``Literal["stdio", "http"]``, so transports
+    such as ``"sse"`` or an unknown value cannot pass normal validation. Use
+    ``model_construct`` to bypass validation and exercise the fallback logic in
+    ``main()``.
+    """
+    return Settings.model_construct(mcp_transport=transport, log_level="INFO")
+
+
+def _patch_main(monkeypatch: pytest.MonkeyPatch, transport: str) -> _DummyServer:
+    """Patch ``create_server`` + ``get_settings`` used by ``main()``.
+
+    Returns the dummy server so callers can assert on the ``run`` invocation.
+    """
+    dummy = _DummyServer()
+    created: list[bool] = []
+
+    def _fake_create_server() -> _DummyServer:
+        created.append(True)
+        return dummy
+
+    monkeypatch.setattr("ytmcp.mcp.server.create_server", _fake_create_server)
+    monkeypatch.setattr(
+        "ytmcp.mcp.server.get_settings", lambda: _settings_with_transport(transport)
+    )
+    dummy.created = created  # type: ignore[attr-defined]
+    return dummy
+
+
+def test_main_stdio_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mcp_transport='stdio' runs the server over stdio."""
+    dummy = _patch_main(monkeypatch, "stdio")
+    main()
+    assert dummy.run_calls == [{"transport": "stdio"}]
+
+
+def test_main_http_transport_maps_to_streamable_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mcp_transport='http' is mapped to the SDK's 'streamable-http'."""
+    dummy = _patch_main(monkeypatch, "http")
+    main()
+    assert dummy.transport == "streamable-http"
+
+
+def test_main_sse_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mcp_transport='sse' is passed through unchanged."""
+    dummy = _patch_main(monkeypatch, "sse")
+    main()
+    assert dummy.transport == "sse"
+
+
+def test_main_unknown_transport_falls_back_to_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unrecognised transport falls back to 'stdio'."""
+    dummy = _patch_main(monkeypatch, "xyz")
+    main()
+    assert dummy.transport == "stdio"
+
+
+def test_main_calls_create_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() builds the server via create_server()."""
+    dummy = _patch_main(monkeypatch, "stdio")
+    main()
+    assert dummy.created == [True]  # type: ignore[attr-defined]
+    assert len(dummy.run_calls) == 1
+
+
+def test_main_runs_exactly_once_with_transport_kwarg(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adversarial: run() is invoked exactly once and only with a transport kwarg."""
+    dummy = _patch_main(monkeypatch, "http")
+    main()
+    assert len(dummy.run_calls) == 1
+    assert set(dummy.run_calls[0]) == {"transport"}
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("stdio", "stdio"),
+        ("http", "streamable-http"),
+        ("sse", "sse"),
+        ("xyz", "stdio"),
+        ("", "stdio"),
+        ("HTTP", "stdio"),  # case-sensitive: unknown -> fallback
+    ],
+)
+def test_main_transport_matrix(
+    monkeypatch: pytest.MonkeyPatch, configured: str, expected: str
+) -> None:
+    """Full transport mapping table for main()."""
+    dummy = _patch_main(monkeypatch, configured)
+    main()
+    assert dummy.transport == expected
